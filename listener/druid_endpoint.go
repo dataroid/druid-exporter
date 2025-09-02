@@ -79,6 +79,7 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 									"service":     strings.Replace(service, "/", "-", 3),
 									"datasource":  entryDatasource.(string),
 									"host":        host,
+									"sourceIp":    hostValue,
 									"id":          id,
 								}).Observe(value)
 							}
@@ -88,6 +89,7 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 								"service":     strings.Replace(service, "/", "-", 3),
 								"datasource":  entryDatasource.(string),
 								"host":        host,
+								"sourceIp":    hostValue,
 								"id":          id,
 							}
 							gaugeCleaner.add(labels)
@@ -100,6 +102,7 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 								"service":     strings.Replace(service, "/", "-", 3),
 								"datasource":  datasource.(string),
 								"host":        host,
+								"sourceIp":    hostValue,
 								"id":          id,
 							}).Observe(value)
 						}
@@ -109,6 +112,7 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 							"service":     strings.Replace(service, "/", "-", 3),
 							"datasource":  datasource.(string),
 							"host":        host,
+							"sourceIp":    hostValue,
 							"id":          id,
 						}
 						gaugeCleaner.add(labels)
@@ -121,6 +125,7 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 							"service":     strings.Replace(service, "/", "-", 3),
 							"datasource":  "",
 							"host":        host,
+							"sourceIp":    hostValue,
 							"id":          id,
 						}).Observe(value)
 					}
@@ -130,6 +135,7 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 						"service":     strings.Replace(service, "/", "-", 3),
 						"datasource":  "",
 						"host":        host,
+						"sourceIp":    hostValue,
 						"id":          id,
 					}
 					gaugeCleaner.add(labels)
