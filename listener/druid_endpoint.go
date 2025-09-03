@@ -30,10 +30,10 @@ func DruidHTTPEndpoint(config *internal.Config, deps *internal.Dependencies) htt
 		dnsLookupValue := utils.ReverseDNSLookup(sourceIP, deps.DNSCache)
 
 		// Track incoming request
-		processor.TrackRequest(req.Method, "received", dnsLookupValue)
+		processor.TrackRequest(req.Method, "received", sourceIP)
 
 		// Validate request method and content type
-		if !isValidRequest(w, req, processor, dnsLookupValue) {
+		if !isValidRequest(w, req, processor, sourceIP) {
 			return
 		}
 
@@ -45,13 +45,13 @@ func DruidHTTPEndpoint(config *internal.Config, deps *internal.Dependencies) htt
 
 		// Track request size and log large requests
 		bodySize := len(body)
-		processor.TrackRequestSize(dnsLookupValue, float64(bodySize))
+		processor.TrackRequestSize(sourceIP, float64(bodySize))
 		logRequestSize(sourceIP, dnsLookupValue, bodySize, len(druidData))
 
 		// Validate we have metrics to process
 		if len(druidData) == 0 {
 			logrus.Warnf("No metrics received from %s (%s)", sourceIP, dnsLookupValue)
-			processor.TrackError("no_metrics", dnsLookupValue)
+			processor.TrackError("no_metrics", sourceIP)
 			http.Error(w, "No metrics received", http.StatusBadRequest)
 			return
 		}
@@ -61,7 +61,7 @@ func DruidHTTPEndpoint(config *internal.Config, deps *internal.Dependencies) htt
 
 		// Track successful request
 		duration := time.Since(start).Seconds()
-		processor.TrackRequestDuration(req.Method, "200", dnsLookupValue, duration)
+		processor.TrackRequestDuration(req.Method, "200", sourceIP, duration)
 
 		// Log request completion
 		logrus.Debugf("Request #%d from %s (%s): processed %d/%d metrics in %v",
@@ -74,10 +74,10 @@ func DruidHTTPEndpoint(config *internal.Config, deps *internal.Dependencies) htt
 }
 
 // isValidRequest validates the HTTP request method and content type
-func isValidRequest(w http.ResponseWriter, req *http.Request, processor *RequestProcessor, dnsLookup string) bool {
+func isValidRequest(w http.ResponseWriter, req *http.Request, processor *RequestProcessor, sourceIP string) bool {
 	reqHeader, _ := header.ParseValueAndParams(req.Header, "Content-Type")
 	if req.Method != "POST" || reqHeader != "application/json" {
-		processor.TrackError("invalid_request", dnsLookup)
+		processor.TrackError("invalid_request", sourceIP)
 		http.Error(w, "Only POST with application/json is supported", http.StatusMethodNotAllowed)
 		return false
 	}
@@ -100,7 +100,7 @@ func readAndParseBody(w http.ResponseWriter, req *http.Request, config *internal
 	var druidData []map[string]interface{}
 	if err := json.Unmarshal(body, &druidData); err != nil {
 		logrus.Errorf("Failed to parse JSON from %s (%s): %v", sourceIP, dnsLookup, err)
-		processor.TrackError("json_parse_error", dnsLookup)
+		processor.TrackError("json_parse_error", sourceIP)
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return nil, nil, false
 	}
@@ -113,12 +113,12 @@ func handleReadError(w http.ResponseWriter, err error, config *internal.Config, 
 	logrus.Errorf("Failed to read request body from %s (%s): %v", sourceIP, dnsLookup, err)
 
 	if strings.Contains(err.Error(), "http: request body too large") {
-		processor.TrackError("request_body_too_large", dnsLookup)
+		processor.TrackError("request_body_too_large", sourceIP)
 		logrus.Errorf("Request body too large from %s (%s). Current limit: %dMB. Consider increasing --max-request-size flag if this is expected.",
 			sourceIP, dnsLookup, config.MaxRequestSizeMB)
 		http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
 	} else {
-		processor.TrackError("body_read_error", dnsLookup)
+		processor.TrackError("body_read_error", sourceIP)
 		http.Error(w, "Bad request", http.StatusBadRequest)
 	}
 }

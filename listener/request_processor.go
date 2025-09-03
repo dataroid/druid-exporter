@@ -73,9 +73,15 @@ func (rp *RequestProcessor) safeStringConvert(value interface{}) string {
 func (rp *RequestProcessor) extractRequiredField(data map[string]interface{}, fieldName, sourceIP, dnsLookup string) (string, bool) {
 	value, exists := data[fieldName]
 	if !exists {
-		logrus.Warnf("Metric data missing '%s' field from %s (%s)", fieldName, sourceIP, dnsLookup)
+		// Get available keys for debugging
+		var availableKeys []string
+		for key := range data {
+			availableKeys = append(availableKeys, key)
+		}
+		logrus.Warnf("Metric data missing '%s' field from %s (%s). Available keys: %v",
+			fieldName, sourceIP, dnsLookup, availableKeys)
 		if rp.errorsTotal != nil {
-			rp.errorsTotal.WithLabelValues("missing_"+fieldName+"_field", dnsLookup).Inc()
+			rp.errorsTotal.WithLabelValues("missing_"+fieldName+"_field", sourceIP).Inc()
 		}
 		return "", false
 	}
@@ -195,36 +201,36 @@ func (rp *RequestProcessor) ProcessMetrics(druidData []map[string]interface{}, s
 
 	// Track processed metrics
 	if rp.metricsProcessed != nil {
-		rp.metricsProcessed.WithLabelValues(dnsLookup).Add(float64(processedCount))
+		rp.metricsProcessed.WithLabelValues(sourceIP).Add(float64(processedCount))
 	}
 
 	return processedCount
 }
 
 // TrackError tracks an error in processing
-func (rp *RequestProcessor) TrackError(errorType, dnsLookup string) {
+func (rp *RequestProcessor) TrackError(errorType, sourceIP string) {
 	if rp.errorsTotal != nil {
-		rp.errorsTotal.WithLabelValues(errorType, dnsLookup).Inc()
+		rp.errorsTotal.WithLabelValues(errorType, sourceIP).Inc()
 	}
 }
 
 // TrackRequest tracks request metrics
-func (rp *RequestProcessor) TrackRequest(method, status, dnsLookup string) {
+func (rp *RequestProcessor) TrackRequest(method, status, sourceIP string) {
 	if rp.requestsTotal != nil {
-		rp.requestsTotal.WithLabelValues(method, status, dnsLookup).Inc()
+		rp.requestsTotal.WithLabelValues(method, status, sourceIP).Inc()
 	}
 }
 
 // TrackRequestDuration tracks request duration
-func (rp *RequestProcessor) TrackRequestDuration(method, status, dnsLookup string, duration float64) {
+func (rp *RequestProcessor) TrackRequestDuration(method, status, sourceIP string, duration float64) {
 	if rp.requestDuration != nil {
-		rp.requestDuration.WithLabelValues(method, status, dnsLookup).Observe(duration)
+		rp.requestDuration.WithLabelValues(method, status, sourceIP).Observe(duration)
 	}
 }
 
 // TrackRequestSize tracks request size
-func (rp *RequestProcessor) TrackRequestSize(dnsLookup string, size float64) {
+func (rp *RequestProcessor) TrackRequestSize(sourceIP string, size float64) {
 	if rp.requestSizeBytes != nil {
-		rp.requestSizeBytes.WithLabelValues(dnsLookup).Observe(size)
+		rp.requestSizeBytes.WithLabelValues(sourceIP).Observe(size)
 	}
 }
