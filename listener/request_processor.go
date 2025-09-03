@@ -78,8 +78,15 @@ func (rp *RequestProcessor) extractRequiredField(data map[string]interface{}, fi
 		for key := range data {
 			availableKeys = append(availableKeys, key)
 		}
-		logrus.Warnf("Metric data missing '%s' field from %s (%s). Available keys: %v",
-			fieldName, sourceIP, dnsLookup, availableKeys)
+
+		// If metric field is missing, dump the entire data structure for debugging
+		if fieldName == "metric" {
+			logrus.Errorf("MISSING METRIC FIELD from %s (%s) - DUMPING FULL DATA: %+v", sourceIP, dnsLookup, data)
+		} else {
+			logrus.Warnf("Metric data missing '%s' field from %s (%s). Available keys: %v",
+				fieldName, sourceIP, dnsLookup, availableKeys)
+		}
+
 		if rp.errorsTotal != nil {
 			rp.errorsTotal.WithLabelValues("missing_"+fieldName+"_field", sourceIP).Inc()
 		}
