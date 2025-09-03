@@ -75,10 +75,13 @@ func main() {
 
 	dnsCache := cache.New(5*time.Minute, 10*time.Minute)
 	router := mux.NewRouter()
-	getDruidAPIdata := collector.Collector()
-	handlerFunc := newHandler(*getDruidAPIdata)
+
+	// Create collector once to prevent memory leaks
+	druidCollector := collector.Collector()
+	prometheus.MustRegister(druidCollector)
+
 	router.Handle("/druid", listener.DruidHTTPEndpoint(*metricsCleanupTTL, *disableHistogram, druidEmittedDataHistogram, druidEmittedDataGauge, dnsCache))
-	router.Handle("/metrics", promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer, handlerFunc))
+	router.Handle("/metrics", promhttp.Handler()) // Use default handler instead of creating new registries
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>
 			<head><title>Druid Exporter</title></head>
@@ -94,16 +97,5 @@ func main() {
 	http.ListenAndServe("0.0.0.0:"+*port, router)
 }
 
-func newHandler(metrics collector.MetricCollector) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		registry := prometheus.NewRegistry()
-		getDruidAPIdata := collector.Collector()
-		registry.MustRegister(getDruidAPIdata)
-		gatherers := prometheus.Gatherers{
-			prometheus.DefaultGatherer,
-			registry,
-		}
-		h := promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{})
-		h.ServeHTTP(w, r)
-	}
-}
+// newHandler function removed - was causing memory leaks by creating new registries on every request
+// Now using promhttp.Handler() directly which uses the default registry

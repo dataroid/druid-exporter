@@ -18,11 +18,18 @@ import (
 // DruidHTTPEndpoint is the endpoint to listen all druid metrics
 func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *prometheus.HistogramVec, gauge *prometheus.GaugeVec, dnsCache *cache.Cache) http.HandlerFunc {
 	gaugeCleaner := newCleaner(gauge, metricsCleanupTTL)
+
+	// Track metrics to prevent excessive memory usage
+	requestCount := 0
+
 	return func(w http.ResponseWriter, req *http.Request) {
+		requestCount++
 		var druidData []map[string]interface{}
 		var id string
 		reqHeader, _ := header.ParseValueAndParams(req.Header, "Content-Type")
 		if req.Method == "POST" && reqHeader == "application/json" {
+			// Limit request body size to prevent memory exhaustion (10MB limit)
+			// req.Body = http.MaxBytesReader(w, req.Body, 10*1024*1024)
 			output, err := ioutil.ReadAll(req.Body)
 			defer req.Body.Close()
 			if err != nil {

@@ -5,10 +5,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"github.com/sirupsen/logrus"
-	"gopkg.in/alecthomas/kingpin.v2"
 	"io/ioutil"
 	"net/http"
+	"sync"
+	"time"
+
+	"github.com/sirupsen/logrus"
+	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 var (
@@ -18,12 +21,25 @@ var (
 	certFile    = kingpin.Flag("tls.cert", "A pem encoded certificate file, EnvVar - CERT_FILE. (Only if tls is configured)").Default("").OverrideDefaultFromEnvar("CERT_FILE").String()
 	keyFile     = kingpin.Flag("tls.key", "A pem encoded key file, EnvVar - CERT_KEY. (Only if tls is configured)").Default("").OverrideDefaultFromEnvar("CERT_KEY").String()
 	caFile      = kingpin.Flag("tls.ca", "A pem encoded CA's certificate file, EnvVar - CA_CERT_FILE. (Only if tls is configured)").Default("").OverrideDefaultFromEnvar("CA_CERT_FILE").String()
+
+	// Singleton HTTP client to prevent memory leaks
+	httpClient *http.Client
+	clientOnce sync.Once
 )
+
+// getHTTPClient returns a singleton HTTP client to prevent memory leaks
+func getHTTPClient() (*http.Client, error) {
+	var err error
+	clientOnce.Do(func() {
+		httpClient, err = generateTLSConfig()
+	})
+	return httpClient, err
+}
 
 // GetHealth returns that druid is healthy or not
 func GetHealth(url string) float64 {
 	kingpin.Parse()
-	client, err := generateTLSConfig()
+	client, err := getHTTPClient()
 	if err != nil {
 		logrus.Errorf("Cannot generate http client: %v", err)
 		return 0
@@ -54,7 +70,7 @@ func GetHealth(url string) float64 {
 // GetResponse will return API response for druid
 func GetResponse(url string, queryType string) ([]byte, error) {
 	kingpin.Parse()
-	client, err := generateTLSConfig()
+	client, err := getHTTPClient()
 	if err != nil {
 		logrus.Errorf("Cannot generate http client: %v", err)
 		return nil, err
@@ -90,7 +106,7 @@ func GetResponse(url string, queryType string) ([]byte, error) {
 // GetSQLResponse will return API response for a druid query
 func GetSQLResponse(url string, query string) ([]byte, error) {
 	kingpin.Parse()
-	client, err := generateTLSConfig()
+	client, err := getHTTPClient()
 	if err != nil {
 		logrus.Errorf("Cannot generate http client: %v", err)
 		return nil, err
@@ -135,6 +151,14 @@ func GetSQLResponse(url string, query string) ([]byte, error) {
 func generateTLSConfig() (*http.Client, error) {
 	kingpin.Parse()
 
+	// Create a base transport with optimized settings to prevent memory leaks
+	baseTransport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		DisableKeepAlives:   false, // Keep connections alive
+	}
+
 	if *certFile != "" && *keyFile != "" && *caFile != "" {
 		cert, err := tls.LoadX509KeyPair(*certFile, *keyFile)
 		if err != nil {
@@ -153,8 +177,12 @@ func generateTLSConfig() (*http.Client, error) {
 			RootCAs:      caCertPool,
 		}
 		tlsConfig.BuildNameToCertificate()
-		transport := &http.Transport{TLSClientConfig: tlsConfig}
-		client := &http.Client{Transport: transport}
+		baseTransport.TLSClientConfig = tlsConfig
+
+		client := &http.Client{
+			Transport: baseTransport,
+			Timeout:   30 * time.Second,
+		}
 		return client, nil
 	}
 
@@ -162,11 +190,19 @@ func generateTLSConfig() (*http.Client, error) {
 		tlsConfig := &tls.Config{
 			InsecureSkipVerify: true,
 		}
-		transport := &http.Transport{TLSClientConfig: tlsConfig}
-		client := &http.Client{Transport: transport}
+		baseTransport.TLSClientConfig = tlsConfig
+
+		client := &http.Client{
+			Transport: baseTransport,
+			Timeout:   30 * time.Second,
+		}
 		return client, nil
 	}
-	client := &http.Client{}
+
+	client := &http.Client{
+		Transport: baseTransport,
+		Timeout:   30 * time.Second,
+	}
 	return client, nil
 }
 
