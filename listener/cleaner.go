@@ -3,7 +3,6 @@ package listener
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
@@ -20,57 +19,25 @@ type cleaner struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	mu      sync.RWMutex // Add mutex for safe concurrent access
-	// Monitoring metrics
-	cleanupDuration prometheus.Histogram
-	cleanupErrors   prometheus.Counter
-	metricsTracked  prometheus.Gauge
-	metricsDeleted  prometheus.Counter
-	cleanupRuns     prometheus.Counter
+	// Monitoring metrics (shared across all cleaners with labels)
+	cleanerID       string
+	cleanupDuration *prometheus.HistogramVec
+	cleanupErrors   *prometheus.CounterVec
+	metricsTracked  *prometheus.GaugeVec
+	metricsDeleted  *prometheus.CounterVec
+	cleanupRuns     *prometheus.CounterVec
 }
 
-func newCleaner(gauge *prometheus.GaugeVec, minutes int) *cleaner {
+func newCleaner(gauge *prometheus.GaugeVec, minutes int, cleanerID string, cleanupDuration *prometheus.HistogramVec, cleanupErrors *prometheus.CounterVec, metricsTracked *prometheus.GaugeVec, metricsDeleted *prometheus.CounterVec, cleanupRuns *prometheus.CounterVec) *cleaner {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Initialize cleaner monitoring metrics
-	cleanupDuration := prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "druid_exporter_cleaner_duration_seconds",
-		Help:    "Duration of cleanup operations",
-		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0},
-	})
-
-	cleanupErrors := prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "druid_exporter_cleaner_errors_total",
-		Help: "Total number of cleanup errors",
-	})
-
-	metricsTracked := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "druid_exporter_cleaner_metrics_tracked",
-		Help: "Current number of metrics being tracked by cleaner",
-	})
-
-	metricsDeleted := prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "druid_exporter_cleaner_metrics_deleted_total",
-		Help: "Total number of metrics deleted by cleaner",
-	})
-
-	cleanupRuns := prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "druid_exporter_cleaner_runs_total",
-		Help: "Total number of cleanup runs",
-	})
-
-	// Register metrics
-	prometheus.MustRegister(cleanupDuration)
-	prometheus.MustRegister(cleanupErrors)
-	prometheus.MustRegister(metricsTracked)
-	prometheus.MustRegister(metricsDeleted)
-	prometheus.MustRegister(cleanupRuns)
-
-	c := cleaner{
+	c := &cleaner{
 		m:               &sync.Map{},
 		gauge:           gauge,
-		minutes:         time.Duration(minutes),
+		minutes:         time.Duration(minutes) * time.Minute,
 		ctx:             ctx,
 		cancel:          cancel,
+		cleanerID:       cleanerID,
 		cleanupDuration: cleanupDuration,
 		cleanupErrors:   cleanupErrors,
 		metricsTracked:  metricsTracked,
@@ -78,143 +45,156 @@ func newCleaner(gauge *prometheus.GaugeVec, minutes int) *cleaner {
 		cleanupRuns:     cleanupRuns,
 	}
 
+	// Create and start cron job
 	c.cron = cron.New()
-	_, err := c.cron.AddFunc(fmt.Sprintf("@every %dm", minutes), func() {
-		if c.ctx.Err() != nil {
-			return // Context cancelled, don't run cleanup
-		}
-		c.cleanup()
-	})
+	_, err := c.cron.AddFunc("@every 1m", c.cleanup)
 	if err != nil {
-		logrus.Errorf("Failed to add cleanup job to cron: %v", err)
+		logrus.Errorf("Failed to create cleanup cron job for cleaner %s: %v", cleanerID, err)
+		if c.cleanupErrors != nil {
+			c.cleanupErrors.WithLabelValues(cleanerID, "cron_creation_error").Inc()
+		}
+		return c
 	}
+
 	c.cron.Start()
-	logrus.Infof("Started metrics cleaner with %d minute TTL", minutes)
-	return &c
+	logrus.Infof("Started metric cleaner %s with %d minute TTL", cleanerID, minutes)
+
+	return c
 }
 
-// Stop gracefully stops the cleaner and cleans up resources
 func (c *cleaner) Stop() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.cancel != nil {
-		c.cancel()
-	}
 	if c.cron != nil {
 		c.cron.Stop()
 	}
-	logrus.Info("Stopped metrics cleaner")
+	if c.cancel != nil {
+		c.cancel()
+	}
+	logrus.Infof("Stopped metric cleaner %s", c.cleanerID)
 }
 
 func (c *cleaner) add(labels prometheus.Labels) {
-	bytes, err := json.Marshal(labels)
+	// Store the metric with current timestamp
+	metricData := map[string]interface{}{
+		"labels":    labels,
+		"timestamp": time.Now(),
+		"cleanerID": c.cleanerID,
+	}
+
+	// Convert to JSON for storage key
+	key, err := json.Marshal(labels)
 	if err != nil {
-		logrus.Errorf("marshal labels error: %v", err)
-		c.cleanupErrors.Inc()
+		logrus.Errorf("Failed to marshal labels for cleaner %s: %v", c.cleanerID, err)
+		if c.cleanupErrors != nil {
+			c.cleanupErrors.WithLabelValues(c.cleanerID, "marshal_error").Inc()
+		}
 		return
 	}
 
-	// Store with current timestamp
-	c.m.Store(string(bytes), time.Now())
+	c.m.Store(string(key), metricData)
 
-	// Update metrics tracked count (approximate, but better than nothing)
+	// Update metrics tracked count in a goroutine to avoid blocking
 	go func() {
-		count := 0
-		c.m.Range(func(k, v interface{}) bool {
-			count++
-			return true
-		})
-		c.metricsTracked.Set(float64(count))
+		if c.metricsTracked != nil {
+			count := 0
+			c.m.Range(func(_, _ interface{}) bool {
+				count++
+				return true
+			})
+			c.metricsTracked.WithLabelValues(c.cleanerID).Set(float64(count))
+		}
 	}()
 }
 
 func (c *cleaner) cleanup() {
-	startTime := time.Now()
-	defer func() {
-		c.cleanupDuration.Observe(time.Since(startTime).Seconds())
-		c.cleanupRuns.Inc()
-	}()
-
-	// Calculate cutoff time - metrics older than this will be deleted
-	beforeTime := time.Now().Add(-time.Minute * c.minutes)
-
-	// Use write lock since we'll be modifying the map
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Check if context is cancelled
-	if c.ctx.Err() != nil {
+	if c.gauge == nil {
 		return
 	}
 
-	deletedCount := 0
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start).Seconds()
+		if c.cleanupDuration != nil {
+			c.cleanupDuration.WithLabelValues(c.cleanerID).Observe(duration)
+		}
+		if c.cleanupRuns != nil {
+			c.cleanupRuns.WithLabelValues(c.cleanerID).Inc()
+		}
+	}()
+
+	c.mu.Lock() // Use write lock for deletion
+	defer c.mu.Unlock()
+
+	now := time.Now()
 	totalCount := 0
+	deletedCount := 0
 	errorCount := 0
 	gaugeDeleteSuccessCount := 0
 	gaugeDeleteFailCount := 0
-	tobeDeletes := make([]interface{}, 0)
 
-	// First pass: identify metrics to delete
-	c.m.Range(func(k, v interface{}) bool {
+	c.m.Range(func(key, value interface{}) bool {
 		totalCount++
-		var labels prometheus.Labels
-		err := json.Unmarshal([]byte(k.(string)), &labels)
-		if err != nil {
-			logrus.Errorf("unmarshal labels error: %v", err)
-			c.cleanupErrors.Inc()
-			errorCount++
-			// Still add to delete list to clean up corrupted entries
-			tobeDeletes = append(tobeDeletes, k)
-			return true
-		}
 
-		updatedAt, ok := v.(time.Time)
+		metricData, ok := value.(map[string]interface{})
 		if !ok {
-			logrus.Errorf("invalid timestamp type in cleaner map - expected time.Time, got %T", v)
-			c.cleanupErrors.Inc()
 			errorCount++
-			tobeDeletes = append(tobeDeletes, k)
+			logrus.Errorf("Invalid metric data type in cleaner %s", c.cleanerID)
 			return true
 		}
 
-		// Check if metric is expired
-		if updatedAt.Before(beforeTime) {
-			// Try to delete from Prometheus gauge
-			deleted := c.gauge.Delete(labels)
-			if deleted {
-				gaugeDeleteSuccessCount++
-				logrus.Tracef("Successfully deleted gauge metric: %v", labels)
-			} else {
-				gaugeDeleteFailCount++
-				logrus.Debugf("Gauge metric not found for deletion (may be normal): %v", labels)
+		timestamp, ok := metricData["timestamp"].(time.Time)
+		if !ok {
+			errorCount++
+			logrus.Errorf("Invalid timestamp in metric data for cleaner %s", c.cleanerID)
+			return true
+		}
+
+		// Check if metric is older than TTL
+		if now.Sub(timestamp) > c.minutes {
+			labels, ok := metricData["labels"].(prometheus.Labels)
+			if !ok {
+				errorCount++
+				logrus.Errorf("Invalid labels in metric data for cleaner %s", c.cleanerID)
+				return true
 			}
 
-			tobeDeletes = append(tobeDeletes, k)
+			// Delete from Prometheus gauge
+			deleteSuccess := c.gauge.Delete(labels)
+			if deleteSuccess {
+				gaugeDeleteSuccessCount++
+			} else {
+				gaugeDeleteFailCount++
+			}
+
+			// Delete from our tracking map
+			c.m.Delete(key)
 			deletedCount++
+
+			logrus.Debugf("Cleaned up expired metric in cleaner %s: %v (age: %v)",
+				c.cleanerID, labels, now.Sub(timestamp))
 		}
 		return true
 	})
 
-	// Second pass: delete from tracking map
-	for _, tobeDelete := range tobeDeletes {
-		c.m.Delete(tobeDelete)
-	}
-
 	// Update metrics
-	c.metricsDeleted.Add(float64(deletedCount))
-	c.metricsTracked.Set(float64(totalCount - len(tobeDeletes)))
+	if c.metricsDeleted != nil {
+		c.metricsDeleted.WithLabelValues(c.cleanerID).Add(float64(deletedCount))
+	}
+	if c.metricsTracked != nil {
+		c.metricsTracked.WithLabelValues(c.cleanerID).Set(float64(totalCount - deletedCount))
+	}
+	if c.cleanupErrors != nil && errorCount > 0 {
+		c.cleanupErrors.WithLabelValues(c.cleanerID, "data_processing_error").Add(float64(errorCount))
+	}
+	if c.cleanupErrors != nil && gaugeDeleteFailCount > 0 {
+		c.cleanupErrors.WithLabelValues(c.cleanerID, "gauge_delete_error").Add(float64(gaugeDeleteFailCount))
+	}
 
 	// Log cleanup summary
-	duration := time.Since(startTime)
 	if deletedCount > 0 || errorCount > 0 {
-		logrus.Infof("Cleanup completed: deleted %d/%d metrics (%d errors, %d gauge successes, %d gauge misses) in %v",
-			deletedCount, totalCount, errorCount, gaugeDeleteSuccessCount, gaugeDeleteFailCount, duration)
+		logrus.Infof("Cleanup completed for cleaner %s: %d total, %d deleted, %d errors, %d gauge_deletes_success, %d gauge_deletes_fail",
+			c.cleanerID, totalCount, deletedCount, errorCount, gaugeDeleteSuccessCount, gaugeDeleteFailCount)
 	} else {
-		logrus.Debugf("Cleanup completed: no metrics to delete from %d total in %v", totalCount, duration)
+		logrus.Debugf("Cleanup completed for cleaner %s: %d metrics tracked, no deletions needed",
+			c.cleanerID, totalCount)
 	}
-
-	// Log detailed stats at trace level
-	logrus.Tracef("Cleanup details: total=%d, expired=%d, errors=%d, gauge_deleted=%d, gauge_missing=%d, duration=%v",
-		totalCount, deletedCount, errorCount, gaugeDeleteSuccessCount, gaugeDeleteFailCount, duration)
 }
