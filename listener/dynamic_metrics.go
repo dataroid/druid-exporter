@@ -69,8 +69,8 @@ func (dmm *DynamicMetricsManager) sanitizeMetricName(metricName string) string {
 		sanitized = "_" + sanitized
 	}
 
-	// Add druid prefix and convert to lowercase
-	return "druid_" + strings.ToLower(sanitized)
+	// Add druid_emitted prefix to avoid conflicts with static collector metrics
+	return "druid_emitted_" + strings.ToLower(sanitized)
 }
 
 // getOrCreateGauge creates or retrieves an existing gauge for the given metric name
