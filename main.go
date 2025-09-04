@@ -4,6 +4,8 @@ import (
 	"druid-exporter/collector"
 	"druid-exporter/listener"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -36,6 +38,14 @@ var (
 		"metrics-cleanup-ttl",
 		"Flag to provide time in minutes for metrics cleanup.",
 	).Default("5").OverrideDefaultFromEnvar("METRICS_CLEANUP_TTL").Int()
+	separateMetrics = kingpin.Flag(
+		"separate-metrics",
+		"Comma-separated list of metric names to export as separate metrics, EnvVar - SEPARATE_METRICS",
+	).Default("").OverrideDefaultFromEnvar("SEPARATE_METRICS").String()
+	separateMetricPrefix = kingpin.Flag(
+		"separate-metric-prefix",
+		"Prefix for the separated metrics, EnvVar - SEPARATE_METRIC_PREFIX. (Default: druid_custom)",
+	).Default("druid_custom").OverrideDefaultFromEnvar("SEPARATE_METRIC_PREFIX").String()
 	druidEmittedDataHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name: "druid_emitted_metrics_histogram",
@@ -48,6 +58,10 @@ var (
 			Help: "Druid emitted metrics from druid emitter",
 		}, []string{"host", "metric_name", "service", "datasource", "id"},
 	)
+	// Maps to store dynamically created separate metrics
+	separateHistograms = make(map[string]*prometheus.HistogramVec)
+	separateGauges     = make(map[string]*prometheus.GaugeVec)
+	separateMetricsMux sync.RWMutex
 )
 
 func init() {
@@ -73,11 +87,32 @@ func main() {
 		})
 	}
 
+	// Parse separate metrics list
+	var separateMetricsList []string
+	if *separateMetrics != "" {
+		separateMetricsList = strings.Split(*separateMetrics, ",")
+		for i, metric := range separateMetricsList {
+			separateMetricsList[i] = strings.TrimSpace(metric)
+		}
+		logrus.Infof("Separate metrics configured: %v", separateMetricsList)
+		logrus.Infof("Separate metrics prefix: %s", *separateMetricPrefix)
+	}
+
 	dnsCache := cache.New(5*time.Minute, 10*time.Minute)
 	router := mux.NewRouter()
 	getDruidAPIdata := collector.Collector()
 	handlerFunc := newHandler(*getDruidAPIdata)
-	router.Handle("/druid", listener.DruidHTTPEndpoint(*metricsCleanupTTL, *disableHistogram, druidEmittedDataHistogram, druidEmittedDataGauge, dnsCache))
+	router.Handle("/druid", listener.DruidHTTPEndpoint(
+		*metricsCleanupTTL,
+		*disableHistogram,
+		druidEmittedDataHistogram,
+		druidEmittedDataGauge,
+		separateHistograms,
+		separateGauges,
+		&separateMetricsMux,
+		*separateMetricPrefix,
+		separateMetricsList,
+		dnsCache))
 	router.Handle("/metrics", promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer, handlerFunc))
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html>

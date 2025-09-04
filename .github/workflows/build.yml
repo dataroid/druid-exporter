@@ -39,4 +39,4 @@ jobs:
         context: .
         file: ./Dockerfile
         push: false
-        tags: opstree/druid-exporter:latest
+        tags: dataroid/druid-exporter:latest
