@@ -18,10 +18,10 @@ import (
 )
 
 // isSeparateMetric checks if a metric name should be routed to separate metrics
-// If separateMetrics is empty, ALL metrics use the separate logic
+// If separateMetrics is empty, no metrics use separate logic (use shared metric with source_ip label)
 func isSeparateMetric(metricName string, separateMetrics []string) bool {
 	if len(separateMetrics) == 0 {
-		return true // Empty list = apply to ALL metrics
+		return false // Empty list = use shared metric for all
 	}
 	for _, separate := range separateMetrics {
 		if metricName == separate {
@@ -191,13 +191,14 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 								}
 								gaugeLabels = histLabels
 							} else {
-								// For regular metrics, include metric_name
+								// For regular metrics, include metric_name and source_ip
 								histLabels = prometheus.Labels{
 									"metric_name": strings.Replace(metric, "/", "-", 3),
 									"service":     strings.Replace(service, "/", "-", 3),
 									"datasource":  entryDatasource.(string),
 									"host":        host,
 									"id":          id,
+									"source_ip":   hostValue,
 								}
 								gaugeLabels = histLabels
 							}
@@ -223,13 +224,14 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 							}
 							gaugeLabels = histLabels
 						} else {
-							// For regular metrics, include metric_name
+							// For regular metrics, include metric_name and source_ip
 							histLabels = prometheus.Labels{
 								"metric_name": strings.Replace(metric, "/", "-", 3),
 								"service":     strings.Replace(service, "/", "-", 3),
 								"datasource":  datasource.(string),
 								"host":        host,
 								"id":          id,
+								"source_ip":   hostValue,
 							}
 							gaugeLabels = histLabels
 						}
@@ -255,13 +257,14 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 						}
 						gaugeLabels = histLabels
 					} else {
-						// For regular metrics, include metric_name
+						// For regular metrics, include metric_name and source_ip
 						histLabels = prometheus.Labels{
 							"metric_name": strings.Replace(metric, "/", "-", 3),
 							"service":     strings.Replace(service, "/", "-", 3),
 							"datasource":  "",
 							"host":        host,
 							"id":          id,
+							"source_ip":   hostValue,
 						}
 						gaugeLabels = histLabels
 					}
