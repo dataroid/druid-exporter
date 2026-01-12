@@ -47,6 +47,7 @@ func sanitizeMetricName(metricName string) string {
 
 // getOrCreateSeparateMetric gets or creates a separate metric for the given metric name
 // If prefix is empty, uses the sanitized metric name directly without a prefix
+// If disableHistogram is true, histogram metrics are not created
 func getOrCreateSeparateMetric(metricName, prefix string, separateHistograms map[string]*prometheus.HistogramVec, separateGauges map[string]*prometheus.GaugeVec, mux *sync.RWMutex, disableHistogram bool) (*prometheus.HistogramVec, *prometheus.GaugeVec) {
 	sanitizedName := sanitizeMetricName(metricName)
 	var metricKey string
@@ -61,7 +62,8 @@ func getOrCreateSeparateMetric(metricName, prefix string, separateHistograms map
 	gauge, gaugeExists := separateGauges[metricKey]
 	mux.RUnlock()
 
-	if histExists && gaugeExists {
+	// Check if we already have the metrics we need
+	if gaugeExists && (disableHistogram || histExists) {
 		return histogram, gauge
 	}
 
@@ -72,7 +74,8 @@ func getOrCreateSeparateMetric(metricName, prefix string, separateHistograms map
 	histogram, histExists = separateHistograms[metricKey]
 	gauge, gaugeExists = separateGauges[metricKey]
 
-	if !histExists {
+	// Only create histogram if not disabled and doesn't exist
+	if !disableHistogram && !histExists {
 		histogram = prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name: metricKey + "_histogram",
@@ -81,6 +84,7 @@ func getOrCreateSeparateMetric(metricName, prefix string, separateHistograms map
 		)
 		separateHistograms[metricKey] = histogram
 		prometheus.MustRegister(histogram)
+		logrus.Infof("Created separate histogram metric: %s_histogram for original metric: %s", metricKey, metricName)
 	}
 
 	if !gaugeExists {
@@ -92,9 +96,9 @@ func getOrCreateSeparateMetric(metricName, prefix string, separateHistograms map
 		)
 		separateGauges[metricKey] = gauge
 		prometheus.MustRegister(gauge)
+		logrus.Infof("Created separate gauge metric: %s for original metric: %s", metricKey, metricName)
 	}
 
-	logrus.Infof("Created separate metric: %s for original metric: %s", metricKey, metricName)
 	return histogram, gauge
 }
 
