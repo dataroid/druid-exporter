@@ -18,9 +18,10 @@ import (
 )
 
 // isSeparateMetric checks if a metric name should be routed to separate metrics
+// If separateMetrics is empty, ALL metrics use the separate logic
 func isSeparateMetric(metricName string, separateMetrics []string) bool {
 	if len(separateMetrics) == 0 {
-		return false
+		return true // Empty list = apply to ALL metrics
 	}
 	for _, separate := range separateMetrics {
 		if metricName == separate {
@@ -45,9 +46,15 @@ func sanitizeMetricName(metricName string) string {
 }
 
 // getOrCreateSeparateMetric gets or creates a separate metric for the given metric name
+// If prefix is empty, uses the sanitized metric name directly without a prefix
 func getOrCreateSeparateMetric(metricName, prefix string, separateHistograms map[string]*prometheus.HistogramVec, separateGauges map[string]*prometheus.GaugeVec, mux *sync.RWMutex, disableHistogram bool) (*prometheus.HistogramVec, *prometheus.GaugeVec) {
 	sanitizedName := sanitizeMetricName(metricName)
-	metricKey := prefix + "_" + sanitizedName
+	var metricKey string
+	if prefix == "" {
+		metricKey = sanitizedName // No prefix
+	} else {
+		metricKey = prefix + "_" + sanitizedName
+	}
 
 	mux.RLock()
 	histogram, histExists := separateHistograms[metricKey]

@@ -44,8 +44,8 @@ var (
 	).Default("").OverrideDefaultFromEnvar("SEPARATE_METRICS").String()
 	separateMetricPrefix = kingpin.Flag(
 		"separate-metric-prefix",
-		"Prefix for the separated metrics, EnvVar - SEPARATE_METRIC_PREFIX. (Default: druid_custom)",
-	).Default("druid_custom").OverrideDefaultFromEnvar("SEPARATE_METRIC_PREFIX").String()
+		"Prefix for the separated metrics, EnvVar - SEPARATE_METRIC_PREFIX. (Default: empty - use original metric name)",
+	).Default("").OverrideDefaultFromEnvar("SEPARATE_METRIC_PREFIX").String()
 	druidEmittedDataHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name: "druid_emitted_metrics_histogram",
