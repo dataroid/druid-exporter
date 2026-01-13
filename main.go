@@ -115,7 +115,7 @@ func main() {
 		dnsCache))
 	router.Handle("/metrics", promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer, handlerFunc))
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html>
+		_, _ = w.Write([]byte(`<html>
 			<head><title>Druid Exporter</title></head>
 			<body>
 			<h1>Druid Exporter</h1>
@@ -126,7 +126,9 @@ func main() {
 	logrus.Infof("Druid exporter started listening on: %v", *port)
 	logrus.Infof("Metrics endpoint - http://0.0.0.0:%v/metrics", *port)
 	logrus.Infof("Druid emitter endpoint - http://0.0.0.0:%v/druid", *port)
-	http.ListenAndServe("0.0.0.0:"+*port, router)
+	if err := http.ListenAndServe("0.0.0.0:"+*port, router); err != nil {
+		logrus.Fatalf("Failed to start server: %v", err)
+	}
 }
 
 func newHandler(metrics collector.MetricCollector) http.HandlerFunc {
