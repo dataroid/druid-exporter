@@ -80,7 +80,7 @@ func getOrCreateSeparateMetric(metricName, prefix string, separateHistograms map
 			prometheus.HistogramOpts{
 				Name: metricKey + "_histogram",
 				Help: fmt.Sprintf("Druid metric %s histogram from druid emitter", metricName),
-			}, []string{"host", "service", "datasource", "id", "source_ip"},
+			}, []string{"host", "service", "datasource", "id", "source_ip", "server_type"},
 		)
 		separateHistograms[metricKey] = histogram
 		prometheus.MustRegister(histogram)
@@ -92,7 +92,7 @@ func getOrCreateSeparateMetric(metricName, prefix string, separateHistograms map
 			prometheus.GaugeOpts{
 				Name: metricKey,
 				Help: fmt.Sprintf("Druid metric %s from druid emitter", metricName),
-			}, []string{"host", "service", "datasource", "id", "source_ip"},
+			}, []string{"host", "service", "datasource", "id", "source_ip", "server_type"},
 		)
 		separateGauges[metricKey] = gauge
 		prometheus.MustRegister(gauge)
@@ -140,6 +140,13 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 				} else {
 					id = ""
 				}
+
+				// Extract server type from service (e.g., "druid/historical" -> "historical")
+				serverType := service
+				if strings.HasPrefix(service, "druid/") {
+					serverType = strings.TrimPrefix(service, "druid/")
+				}
+
 				// Reverse DNS Lookup
 				// Mutates dnsCache
 				hostValue := strings.Split(hostname, ":")[0]
@@ -151,6 +158,7 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 					logrus.Tracef("parameters received and mapped:")
 					logrus.Tracef("    metric     => %s", metric)
 					logrus.Tracef("    service    => %s", service)
+					logrus.Tracef("    server_type => %s", serverType)
 					logrus.Tracef("    hostname   => (%s -> %s)", hostname, host)
 					logrus.Tracef("    datasource => %v", datasource)
 					logrus.Tracef("    value      => %v", value)
@@ -183,15 +191,16 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 							if useSeparateMetrics {
 								// For separate metrics, don't include metric_name as it's part of the metric name
 								histLabels = prometheus.Labels{
-									"service":    strings.Replace(service, "/", "-", 3),
-									"datasource": entryDatasource.(string),
-									"host":       host,
-									"id":         id,
-									"source_ip":  hostValue,
+									"service":     strings.Replace(service, "/", "-", 3),
+									"datasource":  entryDatasource.(string),
+									"host":        host,
+									"id":          id,
+									"source_ip":   hostValue,
+									"server_type": serverType,
 								}
 								gaugeLabels = histLabels
 							} else {
-								// For regular metrics, include metric_name and source_ip
+								// For regular metrics, include metric_name, source_ip, and server_type
 								histLabels = prometheus.Labels{
 									"metric_name": strings.Replace(metric, "/", "-", 3),
 									"service":     strings.Replace(service, "/", "-", 3),
@@ -199,6 +208,7 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 									"host":        host,
 									"id":          id,
 									"source_ip":   hostValue,
+									"server_type": serverType,
 								}
 								gaugeLabels = histLabels
 							}
@@ -216,15 +226,16 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 						if useSeparateMetrics {
 							// For separate metrics, don't include metric_name as it's part of the metric name
 							histLabels = prometheus.Labels{
-								"service":    strings.Replace(service, "/", "-", 3),
-								"datasource": datasource.(string),
-								"host":       host,
-								"id":         id,
-								"source_ip":  hostValue,
+								"service":     strings.Replace(service, "/", "-", 3),
+								"datasource":  datasource.(string),
+								"host":        host,
+								"id":          id,
+								"source_ip":   hostValue,
+								"server_type": serverType,
 							}
 							gaugeLabels = histLabels
 						} else {
-							// For regular metrics, include metric_name and source_ip
+							// For regular metrics, include metric_name, source_ip, and server_type
 							histLabels = prometheus.Labels{
 								"metric_name": strings.Replace(metric, "/", "-", 3),
 								"service":     strings.Replace(service, "/", "-", 3),
@@ -232,6 +243,7 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 								"host":        host,
 								"id":          id,
 								"source_ip":   hostValue,
+								"server_type": serverType,
 							}
 							gaugeLabels = histLabels
 						}
@@ -249,15 +261,16 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 					if useSeparateMetrics {
 						// For separate metrics, don't include metric_name as it's part of the metric name
 						histLabels = prometheus.Labels{
-							"service":    strings.Replace(service, "/", "-", 3),
-							"datasource": "",
-							"host":       host,
-							"id":         id,
-							"source_ip":  hostValue,
+							"service":     strings.Replace(service, "/", "-", 3),
+							"datasource":  "",
+							"host":        host,
+							"id":          id,
+							"source_ip":   hostValue,
+							"server_type": serverType,
 						}
 						gaugeLabels = histLabels
 					} else {
-						// For regular metrics, include metric_name and source_ip
+						// For regular metrics, include metric_name, source_ip, and server_type
 						histLabels = prometheus.Labels{
 							"metric_name": strings.Replace(metric, "/", "-", 3),
 							"service":     strings.Replace(service, "/", "-", 3),
@@ -265,6 +278,7 @@ func DruidHTTPEndpoint(metricsCleanupTTL int, disableHistogram bool, histogram *
 							"host":        host,
 							"id":          id,
 							"source_ip":   hostValue,
+							"server_type": serverType,
 						}
 						gaugeLabels = histLabels
 					}

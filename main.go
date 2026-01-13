@@ -50,13 +50,13 @@ var (
 		prometheus.HistogramOpts{
 			Name: "druid_emitted_metrics_histogram",
 			Help: "Druid emitted metrics from druid emitter",
-		}, []string{"host", "metric_name", "service", "datasource", "id", "source_ip"},
+		}, []string{"host", "metric_name", "service", "datasource", "id", "source_ip", "server_type"},
 	)
 	druidEmittedDataGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "druid_emitted_metrics",
 			Help: "Druid emitted metrics from druid emitter",
-		}, []string{"host", "metric_name", "service", "datasource", "id", "source_ip"},
+		}, []string{"host", "metric_name", "service", "datasource", "id", "source_ip", "server_type"},
 	)
 	// Maps to store dynamically created separate metrics
 	separateHistograms = make(map[string]*prometheus.HistogramVec)
